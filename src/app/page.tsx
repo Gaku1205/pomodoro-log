@@ -1,10 +1,11 @@
-import { greeting } from "@/lib/greeting";
+import { Timer } from "@/components/Timer";
+import { TodayLog } from "@/components/TodayLog";
 
 export default function Home() {
   return (
     <main className="container">
-      <h1>{greeting("世界")}</h1>
-      <p>このアプリは ai-dev-template から作られました。docs/spec.md に仕様を書いて始めます。</p>
+      <Timer />
+      <TodayLog />
     </main>
   );
 }
