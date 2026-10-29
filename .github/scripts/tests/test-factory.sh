@@ -66,7 +66,8 @@ sys.stderr.write(f"UNHANDLED {method} {path}\n"); sys.exit(1)
 PY
 cat > "$T/bin/curl" <<'SH'
 #!/usr/bin/env bash
-echo "curl $*" >> "$FT/calls.log"; cat > "$FT/vercel-body.json"; echo '{"name":"made"}'
+echo "curl $*" >> "$FT/calls.log"; cat > "$FT/vercel-body.json"
+if [ -n "${VERCEL_FAIL:-}" ]; then echo '{"error":{"message":"repo not found"}}'; else echo '{"name":"made"}'; fi
 SH
 chmod +x "$T/bin/gh" "$T/bin/curl"
 
@@ -80,7 +81,7 @@ run_factory() { # 名前 言語 説明 [追加の環境変数...]
 file_in() { git --git-dir="$T/remotes/$1.git" show "main:$2" 2> /dev/null; }
 
 echo "== Next.js：リポジトリを作り、秘密と変数を写し、Vercel につなぎ、main を守り、最初のIssueを作る"
-run_factory morning-board nextjs "毎朝の天気と予定を1枚で見るページ" VERCEL_TOKEN=v > /dev/null
+run_factory morning-board nextjs "毎朝の天気と予定を1枚で見るページ。" VERCEL_TOKEN=v > /dev/null
 calls=$(cat "$T/calls.log")
 assert_contains "テンプレートから作る" "$calls" "POST repos/o/ai-dev-template/generate"
 assert_contains "秘密を写す" "$calls" "secret CLAUDE_CODE_OAUTH_TOKEN o/morning-board len=7"
@@ -90,12 +91,21 @@ assert_contains "Vercel のプロジェクト" "$(cat "$T/vercel-body.json")" '"
 assert_contains "main を守る：check が必須" "$(cat "$T/ruleset.json")" '"context":"check"'
 assert_contains "main を守る：PR が必須" "$(cat "$T/ruleset.json")" '"pull_request"'
 assert_contains "最初のIssueはメモの1行" "$calls" '"title": "毎朝の天気と予定を1枚で見たい"'
-assert_contains "CLAUDE.md に説明" "$(file_in o/morning-board CLAUDE.md | sed -n 3p)" "morning-board：毎朝の天気と予定を1枚で見るページ"
+claude=$(file_in o/morning-board CLAUDE.md)
+assert_eq "CLAUDE.md の説明（句点は1つ・言語の案内は消す）" "morning-board：毎朝の天気と予定を1枚で見るページ。Next.js（App Router）＋TypeScript。" "$(printf '%s\n' "$claude" | sed -n 3p)"
+assert_not_contains "テンプレート本体だけの節を消す（自動マージの印も）" "$claude" "pipeline-self-edit"
+assert_not_contains "その但し書きも消す" "$claude" "ai-dev-template 自身"
 assert_contains "仕様書の目的に説明とメモ" "$(file_in o/morning-board docs/spec.md)" "（元のメモ：毎朝の天気と予定を1枚で見たい）"
+assert_contains "README はこのサービスの説明" "$(file_in o/morning-board README.md | head -3)" "毎朝の天気と予定を1枚で見るページ"
 assert_eq "見本（examples）は持ち込まない" "" "$(file_in o/morning-board examples/python/README.md)"
 assert_contains "Next.js のまま" "$(file_in o/morning-board package.json)" '"next"'
 assert_contains "元のIssueに結果を書く" "$(cat "$T/comment.txt")" "新しいサービス **morning-board** を作りました"
 assert_contains "元のIssueを閉じる" "$calls" "PATCH repos/o/ai-dev-template/issues/7"
+
+echo "== Vercel が断ったら、理由を書いて先へ進む"
+run_factory vercel-ng nextjs "説明" VERCEL_TOKEN=v VERCEL_FAIL=1 > /dev/null
+assert_contains "理由を書く" "$(cat "$T/comment.txt")" "repo not found"
+assert_contains "最初のIssueまでは作る" "$(cat "$T/calls.log")" "POST repos/o/vercel-ng/issues"
 
 echo "== 同じ名前があれば -2 を付ける。VERCEL_TOKEN が無ければ、つながずに知らせる"
 run_factory morning-board nextjs "説明" EXISTING="o/morning-board" > /dev/null
@@ -114,6 +124,7 @@ assert_not_contains "pyinstaller は入れない" "$(file_in $r requirements-dev
 assert_eq "AGENTS.md は空で残る" "0" "$(file_in $r AGENTS.md | wc -c | tr -d ' ')"
 claude=$(file_in $r CLAUDE.md)
 assert_contains "CLAUDE.md：Python（FastAPI）" "$claude" "receipt-api：レシートの写真から金額を取り出すAPI。Python（FastAPI）。"
+assert_not_contains "CLAUDE.md：テンプレート本体だけの節を消す" "$claude" "pipeline-self-edit"
 assert_not_contains "CLAUDE.md：Next.js の注意の行は消す" "$claude" "Next.js固有の注意"
 assert_contains "CLAUDE.md：コードの書き方も Python" "$claude" "ロジックは \`app/\`、テストは \`tests/\`"
 assert_contains "仕様書の技術の欄" "$(file_in $r docs/spec.md)" "Python（FastAPI）、テストは pytest"
@@ -121,7 +132,7 @@ assert_not_contains "Python では Vercel を呼ばない" "$(cat "$T/calls.log"
 
 echo "== 説明に記号があっても壊れない（& / | \\ など）"
 run_factory odd-chars nextjs 'A&B / C|D \ E' > /dev/null
-assert_contains "そのまま書かれる" "$(file_in o/odd-chars CLAUDE.md | sed -n 3p)" 'odd-chars：A&B / C|D \ E'
+assert_contains "そのまま書かれる" "$(file_in o/odd-chars CLAUDE.md | sed -n 3p)" 'odd-chars：A&B / C|D \ E。'
 
 echo "== AIが決めた形が違えば、何も作らずに止める"
 run_factory "Bad_Name" nextjs "x" > /dev/null
@@ -131,5 +142,16 @@ run_factory good-name ruby "x" > /dev/null
 assert_contains "知らない言語" "$(cat "$T/comment.txt")" "nextjs か python"
 run_factory good-name nextjs 'x $(id)' > /dev/null
 assert_contains "危ない記号" "$(cat "$T/comment.txt")" "記号"
+
+echo "== 見た目の段：形が正しいデザイン仕様は docs/design.md に入る。最初のIssueは size:L"
+{ echo "# デザイン仕様"; for i in $(seq 1 60); do echo "- 色や文字の決まり その$i：夜の地に光る数字"; done; } > "$T/design-ok.md"
+run_factory design-ok nextjs "説明" DESIGN_FILE="$T/design-ok.md" > /dev/null
+assert_contains "docs/design.md に入る" "$(file_in o/design-ok docs/design.md)" "夜の地に光る数字"
+assert_contains "結果に書く" "$(cat "$T/comment.txt")" "デザイン仕様（docs/design.md）を書いた"
+assert_contains "最初のIssueは size:L" "$(cat "$T/calls.log")" '"labels[]": "size:L"'
+printf '%s\n' "ちがう見出し" "短い" > "$T/design-bad.md"
+run_factory design-bad nextjs "説明" DESIGN_FILE="$T/design-bad.md" > /dev/null
+assert_not_contains "形が違えば雛形のまま" "$(file_in o/design-bad docs/design.md)" "ちがう見出し"
+assert_contains "そう書く" "$(cat "$T/comment.txt")" "雛形のままにした"
 
 finish
