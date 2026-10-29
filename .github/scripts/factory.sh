@@ -83,17 +83,11 @@ done
 # ---- 3. Vercel ----
 vercel_note=""
 if [ "$APP_STACK" = nextjs ]; then
-  if [ -n "${VERCEL_TOKEN:-}" ]; then
-    q=""; [ -n "${VERCEL_TEAM_ID:-}" ] && q="?teamId=${VERCEL_TEAM_ID}"
-    body=$(jq -nc --arg n "$name" --arg r "$NEW" '{name: $n, framework: "nextjs", gitRepository: {type: "github", repo: $r}}')
-    if res=$(printf '%s' "$body" | curl -sS -f -X POST "$VERCEL_API/v11/projects$q" -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: application/json" --data-binary @- 2>&1); then
-      note "✅ Vercel のプロジェクトを作ってつないだ（最初の push で公開が始まる）"
-      vercel_note="Vercel：$(printf '%s' "$res" | jq -r '.name // empty' 2> /dev/null)"
-    else
-      note "⚠️ Vercel のプロジェクトを作れませんでした（Vercel の GitHub 連携が、このリポジトリを見られるか確かめる）。公開は Vercel の画面でつなぐまで動きません"
-    fi
+  if vout=$(REPO_FULL="$NEW" PROJECT="$name" "$HERE/factory-vercel.sh" 2>&1); then
+    note "✅ Vercel のプロジェクトを作ってつないだ（最初の push で公開が始まる）"
+    vercel_note="Vercel：$vout"
   else
-    note "⚠️ VERCEL_TOKEN が無いので、Vercel にはつないでいません（Vercel の画面で Import するまで公開されません）"
+    note "⚠️ $vout"
   fi
 fi
 
@@ -111,11 +105,42 @@ name, desc, memo = os.environ["NAME"], os.environ["APP_DESC"], os.environ["MEMO"
 def swap(path, old, new):
     s = open(path, encoding="utf-8").read()
     open(path, "w", encoding="utf-8").write(s.replace(old, new, 1))
-swap("CLAUDE.md", "（アプリの説明を1〜2行で書く）", f"{name}：{desc}")
+swap("CLAUDE.md", "（アプリの説明を1〜2行で書く）。", f"{name}：{desc.rstrip('。')}。")
+# テンプレート本体だけの物を消す：「ai-dev-template 自身の作業」の節（自分のスクリプトを自動でマージしてよい印を含む）、その但し書き、
+# Next.js 以外の言語への案内（工場が言語を決めて切り替えるので要らない）。Bootstrap も消すが、作った直後の Bootstrap は
+# 鍵が写される前に動いてコミットできないことがあるので、ここで確実に消す
+import re
+s = open("CLAUDE.md", encoding="utf-8").read()
+s = re.sub(r"\n## ai-dev-template 自身の作業.*?(?=\n## )", "\n", s, count=1, flags=re.S)
+s = s.replace("。ただし ai-dev-template 自身だけ、下の「ai-dev-template 自身の作業」で許した物は触ってよい", "")
+s = s.replace("（パイプラインの説明。ai-dev-template 自身だけ、`docs/pipeline.md` は下の節で触ってよい）", "（パイプラインの説明）")
+s = re.sub(r"（Next\.js 以外で作るなら[^）]*）", "", s, count=1)
+open("CLAUDE.md", "w", encoding="utf-8").write(s)
 swap("docs/spec.md", "（誰の、どんな困りごとを、どう減らすか）", f"{desc}（元のメモ：{memo}）")
+# README は、テンプレートの説明ではなく、このサービスの説明にする
+template = os.environ["TEMPLATE"]
+open("README.md", "w", encoding="utf-8").write(f"""# {name}
+
+{desc}
+
+- 仕様：[docs/spec.md](docs/spec.md)
+- 見た目：[docs/design.md](docs/design.md)
+
+[{template.split('/')[1]}](https://github.com/{template}) の工場で、1行のメモ（{memo}）から作ったサービスです。Issue を書くと、AI が清書・実装・レビュー・マージまで進めます（[docs/pipeline.md](docs/pipeline.md)）。
+""")
 PY2
   if [ "$APP_STACK" = python ]; then
     "$HERE/factory-python.sh" . || exit 1
+  fi
+  # 見た目の段が書いたデザイン仕様（形が正しいときだけ。だめなら雛形のまま）
+  if [ -n "${DESIGN_FILE:-}" ] && [ -f "$DESIGN_FILE" ] && [ ! -L "$DESIGN_FILE" ]; then
+    size=$(wc -c < "$DESIGN_FILE")
+    if [ "$(head -1 "$DESIGN_FILE")" = "# デザイン仕様" ] && [ "$size" -ge 800 ] && [ "$size" -le 60000 ]; then
+      cp "$DESIGN_FILE" docs/design.md
+      echo "DESIGN=yes" > "$work/design.flag"
+    else
+      echo "DESIGN=bad" > "$work/design.flag"
+    fi
   fi
   # 工場は テンプレートの例（examples/）を新しいサービスには持ち込まない
   rm -rf examples
@@ -123,7 +148,11 @@ PY2
   git -c user.name="pipeline-factory" -c user.email="noreply@github.com" commit -q -m "工場：${name} の最初の準備（${APP_STACK}）"
   git push -q origin HEAD:main
 ) || fail "最初の準備を push できませんでした"
-note "✅ CLAUDE.md・仕様書に説明を書いて push した（Bootstrap が動く）"
+note "✅ CLAUDE.md・仕様書・README に説明を書いて push した（Bootstrap が動く）"
+case "$(cat "$work/design.flag" 2> /dev/null)" in
+  DESIGN=yes) note "✅ 見た目の段：このサービスのデザイン仕様（docs/design.md）を書いた" ;;
+  DESIGN=bad) note "⚠️ 見た目の段が書いたデザイン仕様の形が違ったので、雛形のままにした" ;;
+esac
 
 # ---- 5. main を守る ----
 ruleset=$(jq -nc '{
@@ -148,8 +177,8 @@ for _ in $(seq 1 36); do
   sleep "$WAIT"
 done
 [ "$labels" = yes ] || note "⚠️ Bootstrap のラベルがまだできていません（Actions の Bootstrap を見る）。Issue は先に作ります"
-first=$(gh api "repos/$NEW/issues" -f title="$MEMO" \
-  -f body="工場（${TEMPLATE}#${ISSUE}）で作ったサービスの、最初のメモです。企画AIが清書して、そのまま実装まで進めます。" -q .number 2>&1) \
+first=$(gh api "repos/$NEW/issues" -f title="$MEMO" -f "labels[]=size:L" \
+  -f body="工場（${TEMPLATE}#${ISSUE}）で作ったサービスの、最初のメモです。企画AIが清書して、そのまま実装まで進めます。最初の画面を一から作る大きい作業なので size:L（強いモデル）にしています。見た目は docs/design.md のとおりに作ってください。" -q .number 2>&1) \
   || fail "最初のIssueを作れませんでした"
 note "✅ 最初のIssue：https://github.com/$NEW/issues/$first（自動で企画に回る）"
 [ -n "$vercel_note" ] && note "$vercel_note"
