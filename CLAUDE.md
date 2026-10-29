@@ -1,6 +1,6 @@
 # このリポジトリでのルール
 
-（アプリの説明を1〜2行で書く）。Next.js（App Router）＋TypeScript。（Next.js 以外で作るなら、この行と下の「コードの書き方」を言語に合わせて書き換え、`pipeline.json` に言語・確認コマンド・公開先を書く。`docs/pipeline.md`「言語と公開先」）
+pomodoro-log：25分集中・5分休憩のポモドーロを回しながら、今日やったことを1行ずつ記録できるタイマーのWebサービス。。Next.js（App Router）＋TypeScript。（Next.js 以外で作るなら、この行と下の「コードの書き方」を言語に合わせて書き換え、`pipeline.json` に言語・確認コマンド・公開先を書く。`docs/pipeline.md`「言語と公開先」）
 
 - 作業の前に必ず `docs/spec.md`（仕様書）を読む。画面に触る作業では `docs/design.md`（デザイン仕様）も読み、色・文字・文言はそこに書かれたものだけを使う。仕様と食い違う指示がIssueにあれば、Issueを優先し、PRの説明にその旨を書く
 - Next.js固有の注意は AGENTS.md を読む。このNext.jsは学習データと違う所があるので、`node_modules/next/dist/docs/` を確認してから書く
